@@ -246,6 +246,7 @@ class RattlerSolver(Solver):
             pkgs_dirs=context.pkgs_dirs if context.offline else (),
             in_state=in_state,
             build_repodata_subset=self._build_repodata_subset,
+            add_pip_as_python_dependency=context.add_pip_as_python_dependency,
         )
         for channel in conda_build_channels:
             index.reload_channel(channel)

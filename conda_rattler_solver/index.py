@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
@@ -54,6 +55,27 @@ class _ChannelRepoInfo:
     local_json: str | None
 
 
+def _maybe_add_pip_dep(record: dict, add_pip: bool) -> None:
+    """
+    Mutate a repodata record dict in-place, appending 'pip' to depends
+    when the feature flag is enabled and this is a python 2.x/3.x package.
+    """
+    if not add_pip:
+        return
+
+    if record.get("name") != "python":
+        return
+
+    version = record.get("version") or ""
+    if not version.startswith(("2.", "3.")):
+        return
+
+    depends = list(record.get("depends") or [])
+    if "pip" not in depends:
+        depends.append("pip")
+        record["depends"] = depends
+
+
 def _is_sharded_repodata_enabled():
     """
     Flag to see whether we should check for sharded repodata.
@@ -70,6 +92,7 @@ class RattlerIndexHelper:
         pkgs_dirs: PathsType = (),
         in_state: SolverInputState | None = None,
         build_repodata_subset: BuildRepodataSubset | None = None,
+        add_pip_as_python_dependency: bool | None = None,
     ):
         self._unlink_on_del: list[Path] = []
 
@@ -78,6 +101,13 @@ class RattlerIndexHelper:
         self._repodata_fn = repodata_fn
         self.in_state = in_state
         self.build_repodata_subset = build_repodata_subset
+
+        # Respect conda config by default, but allow explicit override
+        self.add_pip_as_python_dependency = (
+            context.add_pip_as_python_dependency
+            if add_pip_as_python_dependency is None
+            else add_pip_as_python_dependency
+        )
 
         self._index: dict[str, _ChannelRepoInfo] = {}
         self._index.update(self._load_channels())
@@ -206,6 +236,38 @@ class RattlerIndexHelper:
 
         return tuple(dict.fromkeys(urls))  # de-duplicate
 
+    def _apply_add_pip_to_json(self, url: str, json_path: str) -> str:
+        """
+        If add_pip_as_python_dependency is enabled, load the given repodata.json,
+        mutate python records to depend on pip, and write a modified copy to a
+        temporary path. Return the path that should be given to SparseRepoData.
+        """
+        if not self.add_pip_as_python_dependency:
+            return json_path
+
+        try:
+            with open(json_path, encoding="utf-8") as f:
+                repodata = json.load(f)
+        except Exception as exc:
+            log.debug("Failed to read repodata.json from %s: %s", json_path, exc)
+            return json_path
+
+        for section in ("packages", "packages.conda"):
+            for rec in repodata.get(section, {}).values():
+                _maybe_add_pip_dep(rec, True)
+
+        with NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
+            f.write(json_dump(repodata))
+            new_path = f.name
+
+        self._unlink_on_del.append(Path(new_path))
+        log.debug(
+            "Applied add_pip_as_python_dependency to %s; new repodata at %s",
+            url,
+            new_path,
+        )
+        return new_path
+
     def _load_channel_repo_info_shards(
         self, urls_to_channel: dict[str, Channel]
     ) -> dict[str, _ChannelRepoInfo] | None:
@@ -242,13 +304,16 @@ class RattlerIndexHelper:
             subdir = Channel.from_url(url).subdir
             repodata = empty_repodata_dict(subdir, base_url=url)
             for filename, record in shards.iter_records():
+                # record is a dict-like with repodata fields
+                _maybe_add_pip_dep(record, self.add_pip_as_python_dependency)
+
                 if filename.endswith(".tar.bz2"):
                     repodata["packages"][filename] = record
                 elif filename.endswith(".conda"):
                     repodata["packages.conda"][filename] = record
                 elif record.get("fn", "").endswith(".whl"):
-                    # Wheel records must contain the `fn` field
                     # https://github.com/conda/ceps/pull/145/changes#diff-82241b2f88ce71caab4f64ac25bff5f1e4544117b076952753b2b09677dec95aR64
+                    # Wheel records must contain the `fn` field
                     # Currently, we only expect whl files to be served in v3 repodata.
                     # In the future, we will need to extend this to support .conda and
                     # .tar.bz2 files in v3 repodata.
@@ -299,7 +364,8 @@ class RattlerIndexHelper:
         # 2. Create repos in same order as `urls`
         index = {}
         for url in urls:
-            info = self._json_path_to_repo_info(url, jsons[url])
+            modified_json = self._apply_add_pip_to_json(url, jsons[url])
+            info = self._json_path_to_repo_info(url, modified_json)
             index[info.noauth_url] = info
 
         return index
@@ -318,6 +384,9 @@ class RattlerIndexHelper:
                 if record.subdir not in self._subdirs:
                     continue
                 record_data = dict(record.dump())
+
+                _maybe_add_pip_dep(record_data, self.add_pip_as_python_dependency)
+
                 for field in (
                     "sha256",
                     "track_features",
