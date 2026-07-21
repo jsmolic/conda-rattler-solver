@@ -115,7 +115,7 @@ jobs:
             test-group: 2
     env:
       ErrorActionPreference: Stop  # powershell exit immediately on error
-      PYTEST_MARKER: ${{ matrix.test-type == 'unit' && 'not integration' || 'integration' }}
+      PYTEST_MARKER: ${{ matrix.test-type == 'unit' && 'not integration and not benchmark' || 'integration and not benchmark' }}
       PYTEST_SPLITS: ${{ matrix.test-type == 'unit' && '2' || '3' }}
 
     steps:
@@ -148,7 +148,7 @@ jobs:
           key: cache-${{ env.HASH }}
 
       - name: Setup Miniconda
-        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
+        uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
         with:
           # CONDA-RATTLER-SOLVER CHANGE: add conda\
           condarc-file: conda\.github\condarc-${{ matrix.default-channel }}
@@ -202,13 +202,22 @@ jobs:
           Get-Command -All powershell
           "$env:PWSHPATH" -split ";" | ForEach-Object { Get-Command -All "$_\pwsh" }
 
+      - name: Stage upstream xfail plugin
+        if: ${{ matrix.test-type != 'conda-rattler-solver' }}
+        working-directory: conda
+        shell: bash
+        run: cp ../conda-rattler-solver/tests/_pytest_upstream.py tests/_pytest_upstream.py
+
       - name: Run Upstream Tests
         # Windows is sensitive to long paths, using `--basetemp=${{ runner.temp }} to
         # keep the test directories shorter
         working-directory: conda  # CONDA-RATTLER-SOLVER CHANGE
         if: ${{ matrix.test-type != 'conda-rattler-solver' }}  # CONDA-RATTLER-SOLVER CHANGE
+        # skip cli startup benchmark test - these benchmarks should only be run by conda
+        # -p: CRS-only xfails (tests/_pytest_upstream.py copied here; not packaged)
         run: >
           python -m pytest
+          -p tests._pytest_upstream
           --cov=conda
           --basetemp=${{ runner.temp }}
           --durations-path=durations\${{ runner.os }}.json
@@ -216,6 +225,7 @@ jobs:
           --splits=${{ env.PYTEST_SPLITS }}
           --reruns=${{ env.PYTEST_RERUN_FAILURES }}
           --reruns-delay ${{ env.PYTEST_RERUN_FAILURES_DELAY }}
+          --ignore=tests\cli\test_startup_benchmarks.py
           -m "${{ env.PYTEST_MARKER }}"
 
       # CONDA-RATTLER-SOLVER CHANGE
@@ -296,7 +306,7 @@ jobs:
             test-type: unit
             test-group: 2
     env:
-      PYTEST_MARKER: ${{ matrix.test-type == 'unit' && 'not integration' || 'integration' }}
+      PYTEST_MARKER: ${{ matrix.test-type == 'unit' && 'not integration and not benchmark' || 'integration and not benchmark' }}
       PYTEST_SPLITS: ${{ matrix.test-type == 'unit' && '2' || '3' }}
       RUST_BACKTRACE: full
 
@@ -327,7 +337,7 @@ jobs:
           key: cache-${{ env.HASH }}
 
       - name: Setup Miniconda
-        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
+        uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
         with:
           # CONDA-RATTLER-SOLVER CHANGE: add conda/
           condarc-file: conda/.github/condarc-${{ matrix.default-channel }}
@@ -364,16 +374,25 @@ jobs:
         if: matrix.test-type == 'integration'
         run: sudo apt update && sudo apt install ash csh fish tcsh xonsh zsh
 
+      - name: Stage upstream xfail plugin
+        if: ${{ matrix.test-type != 'conda-rattler-solver' }}
+        working-directory: conda
+        run: cp ../conda-rattler-solver/tests/_pytest_upstream.py tests/_pytest_upstream.py
+
       - name: Run Tests
         working-directory: conda  # CONDA-RATTLER-SOLVER CHANGE
         if: ${{ matrix.test-type != 'conda-rattler-solver' }}  # CONDA-RATTLER-SOLVER CHANGE
+        # skip cli startup benchmark test - these benchmarks should only be run by conda
+        # -p: CRS-only xfails (tests/_pytest_upstream.py copied here; not packaged)
         run: python -m pytest
+          -p tests._pytest_upstream
           --cov=conda
           --durations-path=durations/${{ runner.os }}.json
           --group=${{ matrix.test-group }}
           --splits=${{ env.PYTEST_SPLITS }}
           --reruns=${{ env.PYTEST_RERUN_FAILURES }}
           --reruns-delay ${{ env.PYTEST_RERUN_FAILURES_DELAY }}
+          --ignore=tests/cli/test_startup_benchmarks.py
           -m "${{ env.PYTEST_MARKER }}"
 
       # CONDA-RATTLER-SOLVER CHANGE
@@ -441,17 +460,17 @@ jobs:
             test-type: integration
             test-group: 3
           - runs-on: macos-latest # osx-arm64
-            python-version: '3.13'
+            python-version: '3.14'
             default-channel: 'conda-forge'
             test-type: unit
             test-group: 1
           - runs-on: macos-latest # osx-arm64
-            python-version: '3.13'
+            python-version: '3.14'
             default-channel: 'conda-forge'
             test-type: unit
             test-group: 2
     env:
-      PYTEST_MARKER: ${{ matrix.test-type == 'unit' && 'not integration' || 'integration' }}
+      PYTEST_MARKER: ${{ matrix.test-type == 'unit' && 'not integration and not benchmark' || 'integration and not benchmark' }}
       PYTEST_SPLITS: ${{ matrix.test-type == 'unit' && '2' || '3' }}
 
     steps:
@@ -481,7 +500,7 @@ jobs:
           key: cache-${{ env.HASH }}
 
       - name: Setup Miniconda
-        uses: conda-incubator/setup-miniconda@fc2d68f6413eb2d87b895e92f8584b5b94a10167 # v3.3.0
+        uses: conda-incubator/setup-miniconda@8ee1f361103df19b6f8c8655fd3967a8ecb162d5 # v4.0.1
         with:
           condarc-file: conda/.github/condarc-${{ matrix.default-channel }}  # CONDA-RATTLER-SOLVER CHANGE: add conda/
           run-post: false  # skip post cleanup
@@ -521,17 +540,26 @@ jobs:
         if: matrix.test-type == 'integration'
         run: brew update && brew install fish xonsh
 
+      - name: Stage upstream xfail plugin
+        if: ${{ matrix.test-type != 'conda-rattler-solver' }}
+        working-directory: conda
+        run: cp ../conda-rattler-solver/tests/_pytest_upstream.py tests/_pytest_upstream.py
+
       - name: Run Tests
         working-directory: conda  # CONDA-RATTLER-SOLVER CHANGE
         if: ${{ matrix.test-type != 'conda-rattler-solver' }}  # CONDA-RATTLER-SOLVER CHANGE
+        # skip cli startup benchmark test - these benchmarks should only be run by conda
+        # -p: CRS-only xfails (tests/_pytest_upstream.py copied here; not packaged)
         run: >
           python -m pytest
+          -p tests._pytest_upstream
           --cov=conda
           --durations-path=durations/${{ runner.os }}.json
           --group=${{ matrix.test-group }}
           --splits=${{ env.PYTEST_SPLITS }}
           --reruns=${{ env.PYTEST_RERUN_FAILURES }}
           --reruns-delay ${{ env.PYTEST_RERUN_FAILURES_DELAY }}
+          --ignore=tests/cli/test_startup_benchmarks.py
           -m "${{ env.PYTEST_MARKER }}"
 
       # CONDA-RATTLER-SOLVER CHANGE
